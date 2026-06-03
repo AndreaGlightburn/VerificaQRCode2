@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#1d1b18">
+<title>Verifica QR Code</title>
+
+<!-- PWA manifest inline (consente "Aggiungi a schermata Home") -->
+<link rel="manifest" href='data:application/json,{"name":"Verifica QR Code","short_name":"Verifica QR","start_url":".","display":"standalone","background_color":"%23f4f1ea","theme_color":"%231d1b18","icons":[]}'>
+
+<!-- Librerie esterne (richiedono rete al primo caricamento) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+:root{
+  --bg:#f4f1ea;
+  --surface:#ffffff;
+  --surface-2:#ece7dc;
+  --ink:#1d1b18;
+  --ink-soft:#5b554c;
+  --line:#d8d1c2;
+  --accent:#d6452b;
+  --accent-dark:#b3361f;
+  --ok:#2f7d4f;
+  --warn:#c9851b;
+  --radius:14px;
+  --shadow:0 4px 18px rgba(29,27,24,.10);
+  --mono:'DM Mono',ui-monospace,monospace;
+  --sans:'Archivo',system-ui,sans-serif;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;height:100%}
+body{
+  font-family:var(--sans);
+  background:var(--bg);
+  color:var(--ink);
+  font-size:16px;
+  line-height:1.45;
+  overscroll-behavior:none;
+  background-image:radial-gradient(circle at 1px 1px,rgba(29,27,24,.05) 1px,transparent 0);
+  background-size:22px 22px;
+}
+button{font-family:inherit;cursor:pointer}
+input,textarea,select{font-family:inherit;font-size:16px}
+
+/* ---------- Header ---------- */
+header{
+  position:sticky;top:0;z-index:50;
+  background:var(--ink);color:#f4f1ea;
+  padding:14px 16px;display:flex;align-items:center;gap:12px;
+  box-shadow:0 2px 10px rgba(0,0,0,.18);
+}
+header .logo{
+  width:34px;height:34px;border:2px solid var(--accent);border-radius:8px;
+  display:grid;place-items:center;flex:0 0 auto;
+}
+header .logo svg{width:18px;height:18px}
+header h1{font-size:17px;font-weight:800;letter-spacing:.3px;margin:0;line-height:1.1}
+header .sub{font-size:11px;color:#b9b2a4;font-weight:500;letter-spacing:.5px;text-transform:uppercase}
+header .count{margin-left:auto;font-family:var(--mono);font-size:12px;color:#b9b2a4;text-align:right}
+header .count b{color:#fff;font-size:15px;display:block}
+
+/* ---------- Layout ---------- */
+main{max-width:680px;margin:0 auto;padding:16px 14px 96px}
+.view{display:none}
+.view.active{display:block;animation:fade .25s ease}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* ---------- Bottoni ---------- */
+.btn{
+  border:none;border-radius:var(--radius);padding:13px 16px;font-weight:700;
+  font-size:15px;display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  background:var(--surface);color:var(--ink);border:1.5px solid var(--line);
+  transition:transform .08s,box-shadow .15s;
+}
+.btn:active{transform:scale(.97)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:var(--shadow)}
+.btn.primary:active{background:var(--accent-dark)}
+.btn.ghost{background:transparent}
+.btn.full{width:100%}
+.btn.small{padding:9px 12px;font-size:13px;border-radius:10px}
+.btn svg{width:18px;height:18px}
+.btn.danger{color:var(--accent);border-color:#e8c4bb}
+
+/* ---------- Card / search ---------- */
+.searchbar{
+  display:flex;gap:8px;margin-bottom:14px;
+}
+.searchbar input{
+  flex:1;padding:12px 14px;border-radius:var(--radius);border:1.5px solid var(--line);
+  background:var(--surface);color:var(--ink);
+}
+.searchbar input:focus{outline:none;border-color:var(--accent)}
+
+.toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.toolbar .btn{flex:1;min-width:120px}
+
+.list{display:flex;flex-direction:column;gap:8px}
+.row-item{
+  background:var(--surface);border:1.5px solid var(--line);border-radius:var(--radius);
+  padding:12px 14px;display:flex;align-items:center;gap:12px;transition:border-color .15s,transform .08s;
+}
+.row-item:active{transform:scale(.99);border-color:var(--accent)}
+.row-item .serial{font-family:var(--mono);font-weight:500;font-size:15px;color:var(--ink);word-break:break-all}
+.row-item .meta{font-size:13px;color:var(--ink-soft);margin-top:2px}
+.row-item .thumb{
+  width:46px;height:46px;border-radius:10px;background:var(--surface-2);flex:0 0 auto;
+  display:grid;place-items:center;overflow:hidden;border:1px solid var(--line);
+}
+.row-item .thumb img{width:100%;height:100%;object-fit:cover}
+.row-item .thumb svg{width:20px;height:20px;color:var(--ink-soft)}
+.row-item .body{flex:1;min-width:0}
+.row-item .pcount{font-size:11px;font-family:var(--mono);color:var(--accent);font-weight:500}
+.row-item .chev{color:var(--ink-soft);flex:0 0 auto}
+
+.empty{
+  text-align:center;padding:54px 20px;color:var(--ink-soft);
+}
+.empty svg{width:48px;height:48px;opacity:.4;margin-bottom:12px}
+.empty p{margin:6px 0;font-size:14px}
+
+/* ---------- Scanner ---------- */
+#reader{width:100%;border-radius:var(--radius);overflow:hidden;border:2px solid var(--ink);background:#000;min-height:240px}
+#reader video{border-radius:12px}
+.scan-status{
+  text-align:center;font-family:var(--mono);font-size:14px;margin:14px 0;padding:10px;
+  border-radius:10px;background:var(--surface);border:1.5px solid var(--line);
+}
+.scan-status.found{border-color:var(--ok);color:var(--ok)}
+.scan-status.missing{border-color:var(--warn);color:var(--warn)}
+
+/* ---------- Modale scheda ---------- */
+.modal-back{
+  position:fixed;inset:0;background:rgba(29,27,24,.5);z-index:100;display:none;
+  backdrop-filter:blur(3px);
+}
+.modal-back.open{display:block}
+.sheet{
+  position:fixed;left:0;right:0;bottom:0;top:0;z-index:101;
+  background:var(--bg);display:none;flex-direction:column;
+  animation:slideup .28s cubic-bezier(.16,1,.3,1);
+}
+.sheet.open{display:flex}
+@keyframes slideup{from{transform:translateY(100%)}to{transform:none}}
+.sheet-head{
+  background:var(--ink);color:#f4f1ea;padding:14px 16px;display:flex;align-items:center;gap:12px;
+  position:sticky;top:0;
+}
+.sheet-head h2{margin:0;font-size:16px;font-weight:800;flex:1;font-family:var(--mono);word-break:break-all}
+.sheet-head .x{background:none;border:none;color:#f4f1ea;font-size:26px;line-height:1;padding:0 4px}
+.sheet-body{flex:1;overflow-y:auto;padding:16px 14px 120px;-webkit-overflow-scrolling:touch}
+.sheet-foot{
+  position:sticky;bottom:0;background:var(--surface);border-top:1.5px solid var(--line);
+  padding:12px 14px;display:flex;gap:10px;
+  padding-bottom:calc(12px + env(safe-area-inset-bottom));
+}
+.sheet-foot .btn{flex:1}
+
+.field{margin-bottom:14px}
+.field label{
+  display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;
+  color:var(--ink-soft);margin-bottom:5px;
+}
+.field label .tag{
+  font-size:9px;background:var(--accent);color:#fff;padding:2px 6px;border-radius:5px;margin-left:6px;
+  letter-spacing:.3px;
+}
+.field input,.field textarea{
+  width:100%;padding:12px 13px;border-radius:11px;border:1.5px solid var(--line);
+  background:var(--surface);color:var(--ink);
+}
+.field input.serial{font-family:var(--mono);font-weight:500}
+.field input:focus,.field textarea:focus{outline:none;border-color:var(--accent)}
+.field textarea{min-height:70px;resize:vertical}
+
+.photos-section{margin-top:8px}
+.photos-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.photo-cell{
+  position:relative;aspect-ratio:1;border-radius:11px;overflow:hidden;border:1.5px solid var(--line);
+  background:var(--surface-2);
+}
+.photo-cell img{width:100%;height:100%;object-fit:cover;display:block}
+.photo-cell .del{
+  position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;
+  background:rgba(29,27,24,.75);color:#fff;border:none;font-size:15px;display:grid;place-items:center;line-height:1;
+}
+.photo-cell .name{
+  position:absolute;bottom:0;left:0;right:0;background:rgba(29,27,24,.7);color:#fff;
+  font-family:var(--mono);font-size:9px;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.add-photo{
+  aspect-ratio:1;border:1.5px dashed var(--accent);border-radius:11px;background:transparent;
+  color:var(--accent);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  font-size:11px;font-weight:700;
+}
+.add-photo svg{width:24px;height:24px}
+
+/* ---------- Toast & dialog ---------- */
+#toast{
+  position:fixed;left:50%;bottom:104px;transform:translateX(-50%) translateY(20px);
+  background:var(--ink);color:#fff;padding:12px 18px;border-radius:12px;font-size:14px;font-weight:600;
+  z-index:200;opacity:0;transition:.3s;pointer-events:none;box-shadow:var(--shadow);max-width:90%;text-align:center;
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+.dialog-back{position:fixed;inset:0;background:rgba(29,27,24,.55);z-index:300;display:none;place-items:center;padding:20px}
+.dialog-back.open{display:grid}
+.dialog{background:var(--surface);border-radius:var(--radius);padding:22px;max-width:340px;width:100%;box-shadow:var(--shadow)}
+.dialog h3{margin:0 0 8px;font-size:17px}
+.dialog p{margin:0 0 18px;color:var(--ink-soft);font-size:14px}
+.dialog .row{display:flex;gap:10px}
+.dialog .row .btn{flex:1}
+
+/* ---------- Nav bottom ---------- */
+nav.tabbar{
+  position:fixed;bottom:0;left:0;right:0;z-index:60;background:var(--surface);
+  border-top:1.5px solid var(--line);display:flex;
+  padding-bottom:env(safe-area-inset-bottom);
+}
+nav.tabbar button{
+  flex:1;background:none;border:none;padding:9px 4px 10px;color:var(--ink-soft);
+  display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;font-weight:700;
+  letter-spacing:.3px;
+}
+nav.tabbar button svg{width:23px;height:23px}
+nav.tabbar button.active{color:var(--accent)}
+nav.tabbar button.scan-tab{position:relative}
+
+.hint{font-size:12.5px;color:var(--ink-soft);background:var(--surface);border:1.5px solid var(--line);
+  border-radius:11px;padding:11px 13px;margin-bottom:14px;line-height:1.5}
+.hint b{color:var(--ink)}
+.section-title{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.7px;color:var(--ink-soft);margin:18px 0 8px}
+input[type=file]{display:none}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#d6452b" stroke-width="2.2"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z"/><path d="M14 14h2v2h-2zM18 14h2v2h-2zM14 18h2v2h-2zM18 18h2v2h-2z" stroke-width="2"/></svg>
+  </div>
+  <div>
+    <h1>Verifica QR Code</h1>
+    <div class="sub">Inventario &amp; ispezioni</div>
+  </div>
+  <div class="count"><b id="hdrCount">0</b>oggetti</div>
+</header>
+
+<main>
+
+  <!-- VISTA ELENCO -->
+  <section class="view active" id="view-list">
+    <div class="searchbar">
+      <input id="search" type="search" placeholder="Cerca per codice, descrizione…" autocomplete="off">
+    </div>
+    <div class="toolbar">
+      <button class="btn primary" id="newBtn">＋ Nuovo</button>
+      <button class="btn" id="scanShortcut">▣ Scansiona</button>
+      <button class="btn" id="importShortcut">⬆ Importa Excel</button>
+    </div>
+    <div class="list" id="list"></div>
+    <div class="empty" id="listEmpty" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h7v7h-7z"/></svg>
+      <p><b>Nessun oggetto</b></p>
+      <p>Carica una tabella Excel per alimentare il programma, oppure crea una scheda a mano.</p>
+      <button class="btn primary" id="importEmpty" style="margin-top:14px">⬆ Importa tabella Excel</button>
+    </div>
+  </section>
+
+  <!-- VISTA SCANNER -->
+  <section class="view" id="view-scan">
+    <div class="hint">Inquadra il <b>QR code</b>. Se il codice è già in archivio si apre la scheda, altrimenti puoi crearne una nuova con quel codice.</div>
+    <div id="reader"></div>
+    <div class="scan-status" id="scanStatus">Premi “Avvia fotocamera”.</div>
+    <div class="toolbar">
+      <button class="btn primary full" id="scanToggle">▶ Avvia fotocamera</button>
+    </div>
+  </section>
+
+  <!-- VISTA ARCHIVIO -->
+  <section class="view" id="view-data">
+    <div class="section-title">Importa</div>
+    <div class="hint">Carica un file <b>.xlsx / .xls / .csv</b>. La colonna del codice viene riconosciuta automaticamente tra: <b>Matr., SN, Serial Number, Seriale, Numero di Serie, QR</b>. Le altre colonne (ID, Descrizione, Ubicazione…) vengono mantenute e restano modificabili.</div>
+    <button class="btn primary full" id="importBtn" style="margin-bottom:10px">⬆ Importa file Excel/CSV</button>
+    <p style="font-size:12.5px;color:var(--ink-soft);margin:6px 2px 0" id="importInfo"></p>
+
+    <div class="section-title">Esporta</div>
+    <div class="hint">L'esportazione genera un Excel con <b>numero progressivo</b> nel nome (es. <i>archivio_v03.xlsx</i>) per distinguere le versioni. Le foto si esportano a parte in un file ZIP, con nome basato sul codice dell'oggetto.</div>
+    <button class="btn full" id="exportXlsxBtn" style="margin-bottom:10px">⬇ Esporta Excel (v<span id="nextVer">01</span>)</button>
+    <button class="btn full" id="exportPhotosBtn" style="margin-bottom:10px">🖼 Esporta foto (ZIP)</button>
+
+    <div class="section-title">Manutenzione</div>
+    <button class="btn danger full" id="wipeBtn">🗑 Svuota archivio</button>
+  </section>
+
+</main>
+
+<!-- NAV -->
+<nav class="tabbar">
+  <button data-view="list" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.3"/><circle cx="3.5" cy="12" r="1.3"/><circle cx="3.5" cy="18" r="1.3"/></svg>Elenco</button>
+  <button data-view="scan" class="scan-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="3" y1="12" x2="21" y2="12"/></svg>Scansiona</button>
+  <button data-view="data"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Archivio</button>
+</nav>
+
+<!-- MODALE SCHEDA -->
+<div class="modal-back" id="modalBack"></div>
+<div class="sheet" id="sheet">
+  <div class="sheet-head">
+    <button class="x" id="closeSheet">×</button>
+    <h2 id="sheetTitle">Scheda</h2>
+  </div>
+  <div class="sheet-body" id="sheetBody"></div>
+  <div class="sheet-foot">
+    <button class="btn danger" id="deleteRecord">Elimina</button>
+    <button class="btn primary" id="saveRecord" style="flex:2">Salva</button>
+  </div>
+</div>
+
+<!-- DIALOG generico -->
+<div class="dialog-back" id="dialogBack">
+  <div class="dialog">
+    <h3 id="dlgTitle"></h3>
+    <p id="dlgMsg"></p>
+    <div class="row">
+      <button class="btn ghost" id="dlgCancel">Annulla</button>
+      <button class="btn primary" id="dlgOk">OK</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+<input type="file" id="photoInput" accept="image/*" capture="environment">
+
+<div id="toast"></div>
+
+<script>
+/* ============================================================
+   VERIFICA QR CODE  —  app PWA single-file
+   Persistenza: IndexedDB  |  Excel: SheetJS  |  QR: html5-qrcode
+   ============================================================ */
+
+/* ---------- riconoscimento colonne ---------- */
+const SERIAL_ALIASES = ["matr","matr.","matricola","sn","s/n","serial number","serial","seriale","numero di serie","n. serie","qr","qrcode","qr code","codice"];
+function norm(s){return String(s==null?"":s).trim().toLowerCase().replace(/\s+/g," ");}
+function isSerialHeader(h){const n=norm(h);return SERIAL_ALIASES.includes(n);}
+
+/* ---------- stato ---------- */
+let CONFIG = { headers:[], serialCol:null, baseName:"archivio", exportCounter:0 };
+let RECORDS = [];        // array di oggetti {colonna:valore,...}
+let currentSerial = null; // serial della scheda aperta (null = nuova)
+
+/* ============================================================
+   IndexedDB
+   ============================================================ */
+const DB_NAME="verifica_qr_db", DB_VER=1;
+let db;
+function openDB(){
+  return new Promise((res,rej)=>{
+    const r=indexedDB.open(DB_NAME,DB_VER);
+    r.onupgradeneeded=e=>{
+      const d=e.target.result;
+      if(!d.objectStoreNames.contains("records")) d.createObjectStore("records",{keyPath:"_key"});
+      if(!d.objectStoreNames.contains("photos"))  d.createObjectStore("photos",{keyPath:"_key"});
+      if(!d.objectStoreNames.contains("meta"))    d.createObjectStore("meta",{keyPath:"k"});
+    };
+    r.onsuccess=e=>{db=e.target.result;res();};
+    r.onerror=e=>rej(e.target.error);
+  });
+}
+function tx(store,mode){return db.transaction(store,mode).objectStore(store);}
+function idbGet(store,key){return new Promise((res,rej)=>{const r=tx(store,"readonly").get(key);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
+function idbAll(store){return new Promise((res,rej)=>{const r=tx(store,"readonly").getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error);});}
+function idbPut(store,val){return new Promise((res,rej)=>{const r=tx(store,"readwrite").put(val);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});}
+function idbDel(store,key){return new Promise((res,rej)=>{const r=tx(store,"readwrite").delete(key);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});}
+function idbClear(store){return new Promise((res,rej)=>{const r=tx(store,"readwrite").clear();r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});}
+
+/* chiave interna stabile per ogni record (indipendente dal serial editabile) */
+let _keySeq = 1;
+
+async function loadState(){
+  const meta = await idbGet("meta","config");
+  if(meta){ CONFIG = meta.value; }
+  const recs = await idbAll("records");
+  RECORDS = recs.sort((a,b)=>(a._key>b._key?1:-1));
+  // ricalcola la sequenza chiave
+  _keySeq = RECORDS.reduce((m,r)=>Math.max(m, parseInt(r._key.replace(/\D/g,""))||0),0)+1;
+}
+async function saveConfig(){ await idbPut("meta",{k:"config",value:CONFIG}); }
+function newKey(){ return "r"+(_keySeq++).toString().padStart(6,"0"); }
+
+/* ============================================================
+   UI helpers
+   ============================================================ */
+function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove("show"),2400);}
+function el(id){return document.getElementById(id);}
+
+function dialog(title,msg,okLabel="Conferma"){
+  return new Promise(res=>{
+    el("dlgTitle").textContent=title; el("dlgMsg").textContent=msg; el("dlgOk").textContent=okLabel;
+    el("dialogBack").classList.add("open");
+    const ok=()=>{cleanup();res(true);}, cancel=()=>{cleanup();res(false);};
+    function cleanup(){el("dialogBack").classList.remove("open");el("dlgOk").onclick=null;el("dlgCancel").onclick=null;}
+    el("dlgOk").onclick=ok; el("dlgCancel").onclick=cancel;
+  });
+}
+
+function escapeHtml(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+
+/* ============================================================
+   Navigazione tab
+   ============================================================ */
+const stopScanner = ()=>{ if(qrRunning) toggleScanner(); };
+document.querySelectorAll("nav.tabbar button").forEach(b=>{
+  b.onclick=()=>switchView(b.dataset.view);
+});
+function switchView(name){
+  if(name!=="scan") stopScanner();
+  document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
+  el("view-"+name).classList.add("active");
+  document.querySelectorAll("nav.tabbar button").forEach(b=>b.classList.toggle("active",b.dataset.view===name));
+}
+el("scanShortcut").onclick=()=>switchView("scan");
+el("importShortcut").onclick=()=>el("fileInput").click();
+el("importEmpty").onclick=()=>el("fileInput").click();
+
+/* ============================================================
+   RENDER elenco
+   ============================================================ */
+function recSerial(r){ return CONFIG.serialCol ? String(r[CONFIG.serialCol]??"") : ""; }
+function recDisplayMeta(r){
+  const parts=[];
+  for(const h of CONFIG.headers){
+    if(h===CONFIG.serialCol) continue;
+    const v=r[h]; if(v!=null && String(v).trim()!=="") parts.push(escapeHtml(v));
+    if(parts.length>=2) break;
+  }
+  return parts.join(" · ");
+}
+
+async function renderList(filter=""){
+  const list=el("list"); list.innerHTML="";
+  el("hdrCount").textContent=RECORDS.length;
+  el("listEmpty").style.display = RECORDS.length? "none":"block";
+  const f=norm(filter);
+  const shown = RECORDS.filter(r=>{
+    if(!f) return true;
+    return CONFIG.headers.some(h=>norm(r[h]).includes(f));
+  });
+  for(const r of shown){
+    const serial=recSerial(r);
+    const photos = await idbGet("photos", r._key);
+    const pc = photos? photos.list.length : 0;
+    const item=document.createElement("div");
+    item.className="row-item";
+    let thumbHtml = `<div class="thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M14 3h7v7M3 14h7v7"/></svg></div>`;
+    if(pc>0) thumbHtml = `<div class="thumb"><img src="${photos.list[0].data}"></div>`;
+    item.innerHTML = `
+      ${thumbHtml}
+      <div class="body">
+        <div class="serial">${escapeHtml(serial)||"<i style='color:#b9b2a4'>(senza codice)</i>"}</div>
+        <div class="meta">${recDisplayMeta(r)||"&nbsp;"}</div>
+        ${pc>0?`<div class="pcount">${pc} foto</div>`:""}
+      </div>
+      <div class="chev"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div>`;
+    item.onclick=()=>openSheet(r._key);
+    list.appendChild(item);
+  }
+  if(f && shown.length===0){
+    list.innerHTML=`<div class="empty"><p>Nessun risultato per “${escapeHtml(filter)}”.</p></div>`;
+  }
+}
+el("search").addEventListener("input",e=>renderList(e.target.value));
+
+/* ============================================================
+   SCHEDA (apertura / modifica / nuovo)
+   ============================================================ */
+function findByKey(key){ return RECORDS.find(r=>r._key===key); }
+function findBySerial(serial){
+  const s=norm(serial);
+  return RECORDS.find(r=>norm(recSerial(r))===s);
+}
+
+async function openSheet(key, prefillSerial=null){
+  let rec = key? findByKey(key) : null;
+  currentSerial = key;
+  el("sheetBody").dataset.key = key||"";
+  el("sheetBody").dataset.new = rec?"":"1";
+
+  // assicura che esistano colonne minime se archivio vuoto
+  if(CONFIG.headers.length===0){
+    CONFIG.headers=["Matr.","Descrizione","Ubicazione"];
+    CONFIG.serialCol="Matr.";
+    await saveConfig();
+  }
+
+  const title = rec? (recSerial(rec)||"Scheda") : "Nuova scheda";
+  el("sheetTitle").textContent=title;
+  el("deleteRecord").style.display = rec? "":"none";
+
+  // costruisci i campi
+  const body=el("sheetBody"); body.innerHTML="";
+  for(const h of CONFIG.headers){
+    const isSerial = h===CONFIG.serialCol;
+    const val = rec? (rec[h]??"") : (isSerial && prefillSerial? prefillSerial : "");
+    const long = norm(h).includes("descr") || norm(h).includes("note") || norm(h).includes("ubic");
+    const f=document.createElement("div"); f.className="field";
+    f.innerHTML=`<label>${escapeHtml(h)}${isSerial?'<span class="tag">CODICE QR</span>':''}</label>`+
+      (long
+        ? `<textarea data-col="${escapeHtml(h)}">${escapeHtml(val)}</textarea>`
+        : `<input class="${isSerial?'serial':''}" data-col="${escapeHtml(h)}" value="${escapeHtml(val)}">`);
+    body.appendChild(f);
+  }
+
+  // sezione foto
+  const ps=document.createElement("div"); ps.className="photos-section";
+  ps.innerHTML=`<label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-soft)">Foto</label>
+                <div class="photos-grid" id="photosGrid"></div>`;
+  body.appendChild(ps);
+  await renderPhotos(key);
+
+  el("modalBack").classList.add("open");
+  el("sheet").classList.add("open");
+  document.body.style.overflow="hidden";
+}
+
+function closeSheet(){
+  el("modalBack").classList.remove("open");
+  el("sheet").classList.remove("open");
+  document.body.style.overflow="";
+  currentSerial=null;
+}
+el("closeSheet").onclick=closeSheet;
+el("modalBack").onclick=closeSheet;
+
+el("newBtn").onclick=()=>openSheet(null);
+
+/* salvataggio scheda */
+el("saveRecord").onclick=async ()=>{
+  const body=el("sheetBody");
+  let key=body.dataset.key;
+  const isNew = body.dataset.new==="1";
+  const rec = isNew? {_key:newKey()} : Object.assign({}, findByKey(key));
+
+  body.querySelectorAll("[data-col]").forEach(inp=>{
+    rec[inp.dataset.col]=inp.value;
+  });
+
+  const serial = recSerial(rec);
+  if(!serial.trim()){
+    if(!await dialog("Codice mancante","Questa scheda non ha un valore nel campo codice. Salvare comunque?","Salva")) return;
+  }
+  // controllo duplicati su nuovo
+  if(isNew && serial.trim()){
+    const dup=findBySerial(serial);
+    if(dup){ if(!await dialog("Codice già presente",`Esiste già un oggetto con codice "${serial}". Creare comunque un duplicato?`,"Crea")) return; }
+  }
+
+  await idbPut("records",rec);
+  if(isNew){ RECORDS.push(rec); body.dataset.key=rec._key; body.dataset.new=""; el("deleteRecord").style.display=""; currentSerial=rec._key;
+    // se c'erano foto scattate prima del salvataggio sono già su key temporaneo? no: foto usano key
+  } else {
+    const i=RECORDS.findIndex(r=>r._key===rec._key); RECORDS[i]=rec;
+  }
+  el("sheetTitle").textContent=serial||"Scheda";
+  await renderList(el("search").value);
+  toast("Scheda salvata ✓");
+  closeSheet();
+};
+
+/* eliminazione */
+el("deleteRecord").onclick=async ()=>{
+  const key=el("sheetBody").dataset.key;
+  if(!key) return;
+  if(!await dialog("Elimina scheda","Eliminare definitivamente questo oggetto e le sue foto?","Elimina")) return;
+  await idbDel("records",key);
+  await idbDel("photos",key);
+  RECORDS=RECORDS.filter(r=>r._key!==key);
+  await renderList(el("search").value);
+  toast("Scheda eliminata");
+  closeSheet();
+};
+
+/* ============================================================
+   FOTO
+   ============================================================ */
+async function renderPhotos(key){
+  const grid=el("photosGrid"); if(!grid) return;
+  grid.innerHTML="";
+  let entry = key? await idbGet("photos",key) : null;
+  const list = entry? entry.list : [];
+  list.forEach((p,idx)=>{
+    const cell=document.createElement("div"); cell.className="photo-cell";
+    cell.innerHTML=`<img src="${p.data}"><button class="del" data-idx="${idx}">×</button><div class="name">${escapeHtml(p.name)}</div>`;
+    cell.querySelector("img").onclick=()=>window.open().document.write(`<img src="${p.data}" style="max-width:100%">`);
+    cell.querySelector(".del").onclick=async (e)=>{
+      e.stopPropagation();
+      if(!await dialog("Elimina foto","Rimuovere questa foto?","Elimina")) return;
+      list.splice(idx,1);
+      await idbPut("photos",{_key:key,list});
+      await renderPhotos(key);
+      renderList(el("search").value);
+    };
+    grid.appendChild(cell);
+  });
+  const add=document.createElement("button"); add.className="add-photo";
+  add.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 4h-5L8 6H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1h-4z"/><circle cx="12" cy="13" r="3.2"/></svg>Scatta`;
+  add.onclick=()=>triggerPhoto();
+  grid.appendChild(add);
+}
+
+let _photoTargetKey=null;
+function triggerPhoto(){
+  // se la scheda è nuova e non salvata, salva prima per ottenere una key
+  const body=el("sheetBody");
+  if(body.dataset.new==="1"){
+    toast("Salva prima la scheda, poi aggiungi le foto");
+    return;
+  }
+  _photoTargetKey = body.dataset.key;
+  el("photoInput").value="";
+  el("photoInput").click();
+}
+el("photoInput").addEventListener("change", async e=>{
+  const file=e.target.files[0]; if(!file||!_photoTargetKey) return;
+  const dataUrl = await compressImage(file, 1280, 0.72);
+  let entry = await idbGet("photos",_photoTargetKey) || {_key:_photoTargetKey,list:[]};
+  const rec = findByKey(_photoTargetKey);
+  const base = (recSerial(rec)||_photoTargetKey).replace(/[^\w\-]+/g,"_");
+  const name = `${base}_${(entry.list.length+1).toString().padStart(2,"0")}.jpg`;
+  entry.list.push({name,data:dataUrl,ts:Date.now()});
+  await idbPut("photos",entry);
+  await renderPhotos(_photoTargetKey);
+  renderList(el("search").value);
+  toast("Foto aggiunta ✓");
+});
+
+function compressImage(file,maxDim,quality){
+  return new Promise(res=>{
+    const img=new Image();
+    img.onload=()=>{
+      let {width:w,height:h}=img;
+      if(w>h && w>maxDim){h=h*maxDim/w;w=maxDim;}
+      else if(h>=w && h>maxDim){w=w*maxDim/h;h=maxDim;}
+      const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+      cv.getContext("2d").drawImage(img,0,0,w,h);
+      res(cv.toDataURL("image/jpeg",quality));
+    };
+    img.src=URL.createObjectURL(file);
+  });
+}
+
+/* ============================================================
+   IMPORT Excel/CSV
+   ============================================================ */
+el("importBtn").onclick=()=>el("fileInput").click();
+el("fileInput").addEventListener("change", async e=>{
+  const file=e.target.files[0]; if(!file) return;
+  try{
+    const buf=await file.arrayBuffer();
+    const wb=XLSX.read(buf,{type:"array"});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const rows=XLSX.utils.sheet_to_json(ws,{defval:"",raw:false});
+    if(rows.length===0){ toast("Il file non contiene righe."); return; }
+
+    const headers=Object.keys(rows[0]);
+    let serialCol = headers.find(isSerialHeader);
+    if(!serialCol){
+      // fallback: chiedi o usa prima colonna
+      serialCol=headers[0];
+      toast("Colonna codice non riconosciuta: uso la 1ª colonna");
+    }
+
+    const merge = RECORDS.length>0
+      ? await dialog("Importazione","Ci sono già dati in archivio. Unire i nuovi record a quelli esistenti? (Annulla = sostituisci tutto)","Unisci")
+      : false;
+
+    if(!merge){
+      await idbClear("records"); await idbClear("photos");
+      RECORDS=[]; _keySeq=1;
+    }
+    // unisci headers
+    CONFIG.headers = merge ? Array.from(new Set([...CONFIG.headers,...headers])) : headers;
+    CONFIG.serialCol = serialCol;
+    CONFIG.baseName = file.name.replace(/\.[^.]+$/,"").replace(/_v\d+$/i,"") || "archivio";
+    await saveConfig();
+
+    let added=0, updated=0;
+    for(const row of rows){
+      const serial = norm(row[serialCol]);
+      const existing = merge && serial ? findBySerial(row[serialCol]) : null;
+      if(existing){
+        Object.assign(existing,row);
+        await idbPut("records",existing); updated++;
+      }else{
+        const rec=Object.assign({_key:newKey()},row);
+        RECORDS.push(rec); await idbPut("records",rec); added++;
+      }
+    }
+    await renderList();
+    el("importInfo").textContent=`Importati: ${added} nuovi, ${updated} aggiornati. Colonna codice: «${serialCol}».`;
+    toast(`Importati ${added+updated} oggetti ✓`);
+    updateVerLabel();
+    switchView("list");
+  }catch(err){
+    console.error(err); toast("Errore lettura file: "+err.message);
+  }
+});
+
+/* ============================================================
+   EXPORT Excel (con numero progressivo)
+   ============================================================ */
+function updateVerLabel(){ el("nextVer").textContent=(CONFIG.exportCounter+1).toString().padStart(2,"0"); }
+
+el("exportXlsxBtn").onclick=async ()=>{
+  if(RECORDS.length===0){ toast("Archivio vuoto."); return; }
+  const headers=CONFIG.headers;
+  const data=RECORDS.map(r=>{const o={};headers.forEach(h=>o[h]=r[h]??"");return o;});
+  const ws=XLSX.utils.json_to_sheet(data,{header:headers});
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Archivio");
+  CONFIG.exportCounter++; await saveConfig();
+  const ver=CONFIG.exportCounter.toString().padStart(2,"0");
+  const fname=`${CONFIG.baseName}_v${ver}.xlsx`;
+  XLSX.writeFile(wb,fname);
+  updateVerLabel();
+  toast(`Esportato ${fname} ✓`);
+};
+
+/* ============================================================
+   EXPORT foto (ZIP, nomi = codice oggetto)
+   ============================================================ */
+el("exportPhotosBtn").onclick=async ()=>{
+  const all=await idbAll("photos");
+  const withPhotos=all.filter(p=>p.list&&p.list.length);
+  if(withPhotos.length===0){ toast("Nessuna foto da esportare."); return; }
+  toast("Preparazione ZIP…");
+  const zip=new JSZip();
+  for(const entry of withPhotos){
+    const rec=findByKey(entry._key);
+    const folder = rec ? (recSerial(rec)||entry._key).replace(/[^\w\-]+/g,"_") : entry._key;
+    for(const p of entry.list){
+      const b64=p.data.split(",")[1];
+      zip.file(`${folder}/${p.name}`, b64, {base64:true});
+    }
+  }
+  const blob=await zip.generateAsync({type:"blob"});
+  const ver=(CONFIG.exportCounter||0).toString().padStart(2,"0");
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=`${CONFIG.baseName}_foto_v${ver}.zip`;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),3000);
+  toast("ZIP foto esportato ✓");
+};
+
+/* svuota archivio */
+el("wipeBtn").onclick=async ()=>{
+  if(!await dialog("Svuota archivio","Eliminare TUTTI gli oggetti, le foto e la configurazione? Operazione irreversibile.","Svuota tutto")) return;
+  await idbClear("records"); await idbClear("photos"); await idbClear("meta");
+  RECORDS=[]; _keySeq=1; CONFIG={headers:[],serialCol:null,baseName:"archivio",exportCounter:0};
+  el("importInfo").textContent=""; updateVerLabel();
+  await renderList();
+  toast("Archivio svuotato");
+};
+
+/* ============================================================
+   SCANNER QR (html5-qrcode)
+   ============================================================ */
+let html5Qr=null, qrRunning=false, lastDecoded=null, lastDecodedTs=0;
+
+async function toggleScanner(){
+  if(qrRunning){
+    try{ await html5Qr.stop(); }catch(e){}
+    qrRunning=false;
+    el("scanToggle").textContent="▶ Avvia fotocamera";
+    el("scanStatus").className="scan-status";
+    el("scanStatus").textContent="Fotocamera ferma.";
+    return;
+  }
+  if(!window.Html5Qrcode){ toast("Libreria QR non caricata (serve rete)."); return; }
+  if(!window.isSecureContext){
+    el("scanStatus").className="scan-status missing";
+    el("scanStatus").innerHTML="⚠ La fotocamera richiede <b>HTTPS</b> o localhost.";
+  }
+  html5Qr = html5Qr || new Html5Qrcode("reader",{verbose:false});
+  try{
+    await html5Qr.start(
+      {facingMode:"environment"},
+      {fps:10, qrbox:{width:230,height:230}, aspectRatio:1.0},
+      onScan,
+      ()=>{}
+    );
+    qrRunning=true;
+    el("scanToggle").textContent="⏸ Ferma fotocamera";
+    el("scanStatus").className="scan-status";
+    el("scanStatus").textContent="Inquadra un QR code…";
+  }catch(err){
+    el("scanStatus").className="scan-status missing";
+    el("scanStatus").textContent="Impossibile avviare la fotocamera: "+err;
+  }
+}
+el("scanToggle").onclick=toggleScanner;
+
+async function onScan(decoded){
+  const now=Date.now();
+  if(decoded===lastDecoded && now-lastDecodedTs<2500) return; // anti-doppione
+  lastDecoded=decoded; lastDecodedTs=now;
+  if(navigator.vibrate) navigator.vibrate(60);
+
+  const rec=findBySerial(decoded);
+  if(rec){
+    el("scanStatus").className="scan-status found";
+    el("scanStatus").textContent="✓ Trovato: "+decoded;
+    await toggleScanner();
+    openSheet(rec._key);
+  }else{
+    el("scanStatus").className="scan-status missing";
+    el("scanStatus").textContent="✗ Non in archivio: "+decoded;
+    const create=await dialog("Codice non trovato",`Il codice "${decoded}" non è in archivio. Creare una nuova scheda con questo codice?`,"Crea scheda");
+    if(create){
+      await toggleScanner();
+      switchView("list");
+      openSheet(null, decoded);
+    }
+  }
+}
+
+/* ============================================================
+   AVVIO
+   ============================================================ */
+(async function init(){
+  try{
+    await openDB();
+    await loadState();
+    updateVerLabel();
+    await renderList();
+    if(RECORDS.length>0) el("importInfo").textContent=`Archivio attuale: ${RECORDS.length} oggetti. Colonna codice: «${CONFIG.serialCol||"—"}».`;
+  }catch(e){
+    console.error(e);
+    toast("Errore inizializzazione: "+e.message);
+  }
+})();
+</script>
+</body>
+</html>
